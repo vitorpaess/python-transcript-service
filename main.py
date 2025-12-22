@@ -21,7 +21,6 @@ from youtube_transcript_api._errors import (
     TranscriptsDisabled,
     NoTranscriptFound,
     VideoUnavailable,
-    NoTranscriptAvailable,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -141,13 +140,6 @@ def fetch_transcript(request: TranscriptRequest):
         return TranscriptResponse(
             success=False,
             error="This video is unavailable (private, deleted, or region-locked).",
-        )
-
-    except NoTranscriptAvailable:
-        logger.warning(f"No transcript available for {video_id}")
-        return TranscriptResponse(
-            success=False,
-            error="No transcript is available for this video.",
         )
 
     except Exception as e:
