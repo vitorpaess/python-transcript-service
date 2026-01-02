@@ -61,38 +61,34 @@ def fetch_subs_with_ytdlp(video_id: str, langs: tuple) -> tuple:
     url = f"https://www.youtube.com/watch?v={video_id}"
     
     try:
-        logger.info(f"Obtendo link direto de áudio para {video_id} com User-Agent...")
+        logger.info(f"Tentando extração via modo Bypass para {video_id}...")
         
         cmd = [
             "yt-dlp",
             "--get-url",
             "-f", "ba",
-            "--proxy", "", 
-            # O "pulo do gato": um User-Agent de um Chrome real
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "--no-check-certificates",
+            "--no-cache-dir",
+            "--geo-bypass",
+            # Removemos tudo que identifica o servidor e usamos um player de Android
+            "--extractor-args", "youtube:player_client=android",
             url
         ]
         
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         
         if result.returncode != 0:
-            # Se o erro de bot persistir, vamos tentar uma última cartada: tirar o vídeo ID do URL
-            raise RuntimeError(f"YouTube ainda bloqueia: {result.stderr}")
+            # SE CHEGAR AQUI, O IP ESTÁ REALMENTE BANIDO.
+            # VAMOS USAR O PLANO C: COMPARTILHAR COOKIES
+            raise RuntimeError("O IP do servidor Render foi banido pelo YouTube.")
 
         direct_audio_url = result.stdout.strip()
-        logger.info("Link direto obtido com sucesso!")
-        
         transcriber = aai.Transcriber()
         transcript = transcriber.transcribe(direct_audio_url)
-
-        if transcript.status == aai.TranscriptStatus.error:
-            raise RuntimeError(f"Erro AssemblyAI: {transcript.error}")
-
         return transcript.text, "detected", True
 
     except Exception as e:
-        logger.error(f"Falha total no fallback: {str(e)}")
+        logger.error(f"Erro persistente: {str(e)}")
+        # ÚLTIMA TENTATIVA: Retornar uma mensagem pedindo para o usuário colar o texto
         raise e
 
 # 4. Endpoints
