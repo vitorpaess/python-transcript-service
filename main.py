@@ -89,10 +89,8 @@ def _clean_vtt_to_text(vtt: str) -> str:
     # collapse whitespace
     return re.sub(r"\s+", " ", " ".join(lines)).strip()
 
-
 def fetch_subs_with_ytdlp(video_id: str, langs: Tuple[str, ...]) -> Tuple[str, str, bool]:
     url = f"https://www.youtube.com/watch?v={video_id}"
-
     proxy = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
     proxy_arg = ["--proxy", proxy] if proxy else []
 
@@ -114,9 +112,7 @@ def fetch_subs_with_ytdlp(video_id: str, langs: Tuple[str, ...]) -> Tuple[str, s
             url,
         ]
 
-        # TUDO ABAIXO DEVE ESTAR IDENTADO (DENTRO DO 'WITH')
         logger.info(f"yt-dlp attempt for {video_id}")
-        
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
@@ -130,7 +126,6 @@ def fetch_subs_with_ytdlp(video_id: str, langs: Tuple[str, ...]) -> Tuple[str, s
 
         chosen = vtt_files[0]
         base = os.path.basename(chosen)
-
         is_auto = ".auto." in base
         lang_guess = "en"
         m = re.search(r"\.(?P<lang>[a-zA-Z-]+)\.(?:auto\.)?vtt$", base)
