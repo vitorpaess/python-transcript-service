@@ -60,35 +60,44 @@ def extract_video_id(url_or_id: str) -> str:
 def fetch_subs_with_ytdlp(video_id: str, langs: tuple) -> tuple:
     url = f"https://www.youtube.com/watch?v={video_id}"
     
+    # PEGAR A PROXY DAS VARIÁVEIS DE AMBIENTE DO RENDER
+    # Certifique-se de que a variável HTTPS_PROXY está preenchida no painel do Render
+    proxy_url = os.getenv("HTTPS_PROXY") 
+    
     try:
-        logger.info(f"Tentando extração via modo Bypass para {video_id}...")
+        logger.info(f"Usando Proxy para extrair áudio de {video_id}...")
         
         cmd = [
             "yt-dlp",
+            "--proxy", proxy_url if proxy_url else "", # Usa a proxy se existir
             "--get-url",
             "-f", "ba",
-            "--no-cache-dir",
-            "--geo-bypass",
-            # Removemos tudo que identifica o servidor e usamos um player de Android
-            "--extractor-args", "youtube:player_client=android",
+            "--no-check-certificates",
             url
         ]
         
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        # Executa o comando para pegar a URL direta do GoogleVideo
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         
         if result.returncode != 0:
-            # SE CHEGAR AQUI, O IP ESTÁ REALMENTE BANIDO.
-            # VAMOS USAR O PLANO C: COMPARTILHAR COOKIES
-            raise RuntimeError("O IP do servidor Render foi banido pelo YouTube.")
+            logger.error(f"Erro do yt-dlp com Proxy: {result.stderr}")
+            raise RuntimeError(f"YouTube recusou a Proxy: {result.stderr}")
 
         direct_audio_url = result.stdout.strip()
+        
+        logger.info("URL obtida via Proxy! Enviando para AssemblyAI...")
+        
+        # A AssemblyAI vai baixar o áudio diretamente desse link
         transcriber = aai.Transcriber()
         transcript = transcriber.transcribe(direct_audio_url)
+
+        if transcript.status == aai.TranscriptStatus.error:
+            raise RuntimeError(f"Erro AssemblyAI: {transcript.error}")
+
         return transcript.text, "detected", True
 
     except Exception as e:
-        logger.error(f"Erro persistente: {str(e)}")
-        # ÚLTIMA TENTATIVA: Retornar uma mensagem pedindo para o usuário colar o texto
+        logger.error(f"Falha total com Proxy: {str(e)}")
         raise e
 
 # 4. Endpoints
