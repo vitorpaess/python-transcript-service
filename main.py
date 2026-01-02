@@ -109,27 +109,21 @@ def fetch_subs_with_ytdlp(video_id: str, langs: Tuple[str, ...]) -> Tuple[str, s
             "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
             "--no-check-certificates",
             "--geo-bypass",
-            # --- ESTE É O PARÂMETRO CHAVE ---
             "--extractor-args", "youtube:player_client=ios,android;skip=web",
-            # --------------------------------
             *proxy_arg,
             url,
         ]
 
-logger.info(f"yt-dlp attempt for {video_id}")
+        # TUDO ABAIXO DEVE ESTAR IDENTADO (DENTRO DO 'WITH')
+        logger.info(f"yt-dlp attempt for {video_id}")
         
-        # 1. Executa o comando e captura as saídas de erro e sucesso
         result = subprocess.run(cmd, capture_output=True, text=True)
         
-        # 2. Se o código de saída não for zero (erro), detalhamos o porquê no log
         if result.returncode != 0:
-            # Pegamos a última linha do erro (onde geralmente está a causa real do YouTube)
             error_details = result.stderr.strip().split('\n')[-1] if result.stderr else "Unknown error"
             logger.error(f"yt-dlp stderr full: {result.stderr}")
-            # Lançamos o erro com a mensagem específica para você ver no Render
             raise RuntimeError(f"yt-dlp failed: {error_details}")
 
-        # 3. Se o comando funcionou, continuamos exatamente com a sua lógica original
         vtt_files = sorted(glob.glob(os.path.join(d, "*.vtt")))
         if not vtt_files:
             raise RuntimeError("yt-dlp found no subtitle files (.vtt)")
