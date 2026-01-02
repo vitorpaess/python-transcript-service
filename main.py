@@ -106,13 +106,15 @@ def fetch_subs_with_ytdlp(video_id: str, langs: Tuple[str, ...]) -> Tuple[str, s
             "--write-subs",
             "--write-auto-subs",
             "--sub-lang", ",".join(langs),
-            "--sub-format", "vtt/srv1/srv2/srv3/ttml", # <--- Aumentamos os formatos aceitos
+            # Alteração 1: Aceitar múltiplos formatos de legenda
+            "--sub-format", "vtt/srv1/srv2/srv3/ttml", 
             "-o", os.path.join(d, "%(id)s.%(ext)s"),
             "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "--no-check-certificates",
             "--geo-bypass",
             "--referer", "https://www.google.com/",
-            "--extractor-args", "youtube:player_client=tv,web_embedded;skip=web", # <--- Tentará TV e depois Embedded
+            # Alteração 2: Tentar TV primeiro, depois Web Embedded
+            "--extractor-args", "youtube:player_client=tv,web_embedded;skip=web",
             *proxy_arg,
             url,
         ]
