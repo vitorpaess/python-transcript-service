@@ -93,10 +93,10 @@ def fetch_subs_with_ytdlp(video_id: str, langs: Tuple[str, ...]) -> Tuple[str, s
     url = f"https://www.youtube.com/watch?v={video_id}"
     proxy = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
     proxy_arg = ["--proxy", proxy] if proxy else []
+    
     logger.info(f"Proxy detectada: {'Sim' if proxy else 'Não'}")
-if proxy:
-    # Isso mostra apenas o início da proxy no log para segurança
-    logger.info(f"URL da Proxy: {proxy[:15]}...")
+    if proxy:
+        logger.info(f"URL da Proxy: {proxy[:15]}...")
 
     with tempfile.TemporaryDirectory() as d:
         cmd = [
@@ -111,7 +111,7 @@ if proxy:
             "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
             "--no-check-certificates",
             "--geo-bypass",
-            "--extractor-args", "youtube:player_client=ios,android;skip=web",
+            "--extractor-args", "youtube:player_client=android;skip=web",
             *proxy_arg,
             url,
         ]
