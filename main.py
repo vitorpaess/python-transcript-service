@@ -106,15 +106,15 @@ def fetch_subs_with_ytdlp(video_id: str, langs: Tuple[str, ...]) -> Tuple[str, s
             "--write-subs",
             "--write-auto-subs",
             "--sub-lang", ",".join(langs),
-            # MUDANÇA AQUI: Aceita vtt ou qualquer outro formato disponível
-            "--sub-format", "vtt/srv1/srv2/srv3/ttml", 
+            # MUDANÇA 1: Aceitar absolutamente qualquer formato (vtt, srv, json3, etc)
+            "--sub-format", "vtt/srv1/srv2/srv3/json3/ttml", 
             "-o", os.path.join(d, "%(id)s.%(ext)s"),
             "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "--no-check-certificates",
             "--geo-bypass",
             "--referer", "https://www.google.com/",
-            # MUDANÇA AQUI: Tenta TV primeiro, se não der, tenta Web Embedded
-            "--extractor-args", "youtube:player_client=tv,web_embedded;skip=web",
+            # MUDANÇA 2: Hierarquia de clientes (TV é mais seguro, WEB tem mais formatos)
+            "--extractor-args", "youtube:player_client=tv,web_embedded,android;skip=web",
             *proxy_arg,
             url,
         ]
