@@ -58,16 +58,12 @@ def extract_video_id(url_or_id: str) -> str:
     return url_or_id
 
 def fetch_subs_with_ytdlp(video_id: str, langs: tuple) -> tuple:
-    """
-    FALLBACK: Baixa o áudio e transcreve via AssemblyAI.
-    Removida a proxy que estava causando erro 402.
-    """
     url = f"https://www.youtube.com/watch?v={video_id}"
     
     with tempfile.TemporaryDirectory() as d:
-        # Comando sem os argumentos de --proxy
         cmd = [
             "yt-dlp",
+            "--proxy", "",        # <--- ISSO AQUI: Força proxy vazia (conexão direta)
             "-f", "ba/b",
             "--extract-audio",
             "--audio-format", "mp3",
@@ -77,24 +73,7 @@ def fetch_subs_with_ytdlp(video_id: str, langs: tuple) -> tuple:
             "--geo-bypass",
             url,
         ]
-
-        logger.info(f"Fallback yt-dlp: Extraindo áudio de {video_id} (Sem Proxy)")
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        
-        if result.returncode != 0:
-            logger.error(f"Erro yt-dlp: {result.stderr}")
-            raise RuntimeError("Falha ao baixar áudio do YouTube (IP possivelmente bloqueado).")
-
-        audio_path = os.path.join(d, f"{video_id}.mp3")
-        
-        logger.info("Enviando para AssemblyAI...")
-        transcriber = aai.Transcriber()
-        transcript = transcriber.transcribe(audio_path)
-
-        if transcript.status == aai.TranscriptStatus.error:
-            raise RuntimeError(f"Erro AssemblyAI: {transcript.error}")
-
-        return transcript.text, "detected", True
+        # ... resto do código igual
 
 # 4. Endpoints
 @app.post("/transcript", response_model=TranscriptResponse)
