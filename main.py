@@ -58,51 +58,28 @@ def extract_video_id(url_or_id: str) -> str:
     return url_or_id
 
 def fetch_subs_with_ytdlp(video_id: str, langs: tuple) -> tuple:
+    """
+    FALLBACK: Usa a própria AssemblyAI para buscar o áudio do YouTube.
+    Isso evita bloqueios de IP no seu servidor Render.
+    """
     url = f"https://www.youtube.com/watch?v={video_id}"
     
-    with tempfile.TemporaryDirectory() as d:
-        cmd = [
-            "yt-dlp",
-            "--proxy", "",
-            "--force-ipv4",
-            "--impersonate", "chrome",  # Finge ser um navegador Chrome real
-            "--js-runtime", "deno",      # Usa o Deno que instalamos no Docker
-            "-f", "ba/b",
-            "--extract-audio",
-            "--audio-format", "mp3",
-            "--audio-quality", "9",
-            "-o", os.path.join(d, f"{video_id}.%(ext)s"),
-            "--no-check-certificates",
-            "--geo-bypass",
-            url,
-        ]
+    try:
+        logger.info(f"Fallback: Solicitando que a AssemblyAI processe o vídeo {video_id}")
+        
+        transcriber = aai.Transcriber()
+        # Passamos a URL do YouTube diretamente para a AssemblyAI!
+        transcript = transcriber.transcribe(url)
 
-        try:
-            logger.info(f"Fallback yt-dlp: Extraindo áudio de {video_id}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120) # 2 min de limite
-            
-            if result.returncode != 0:
-                logger.error(f"Erro yt-dlp: {result.stderr}")
-                raise RuntimeError("YouTube bloqueou o download direto.")
+        if transcript.status == aai.TranscriptStatus.error:
+            # Se a AssemblyAI também for bloqueada, ela nos avisará aqui
+            raise RuntimeError(f"Erro AssemblyAI: {transcript.error}")
 
-            audio_path = os.path.join(d, f"{video_id}.mp3")
-            
-            if not os.path.exists(audio_path):
-                raise RuntimeError("Arquivo de áudio não foi criado.")
+        return transcript.text, "detected", True
 
-            logger.info("Enviando para AssemblyAI...")
-            transcriber = aai.Transcriber()
-            transcript = transcriber.transcribe(audio_path)
-
-            if transcript.status == aai.TranscriptStatus.error:
-                raise RuntimeError(f"Erro AssemblyAI: {transcript.error}")
-
-            return transcript.text, "detected", True
-
-        except Exception as e:
-            logger.error(f"Falha interna no fetch_subs: {str(e)}")
-            # IMPORTANTE: Retornar uma tupla vazia ou erro claro para evitar o "NoneType"
-            raise e
+    except Exception as e:
+        logger.error(f"Falha total no fallback: {str(e)}")
+        raise e
 
 # 4. Endpoints
 @app.post("/transcript", response_model=TranscriptResponse)
