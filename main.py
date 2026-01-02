@@ -91,38 +91,39 @@ def _clean_vtt_to_text(vtt: str) -> str:
 
 
 def fetch_subs_with_ytdlp(video_id: str, langs: Tuple[str, ...]) -> Tuple[str, str, bool]:
-    """
-    Fetch subtitles using yt-dlp (manual or auto) WITHOUT downloading video/audio.
-    Returns: (text, language_code_guess, is_auto_generated_guess)
-    """
     url = f"https://www.youtube.com/watch?v={video_id}"
 
-    # If you configured a proxy in Render, re-use it for yt-dlp as well.
     proxy = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
     proxy_arg = ["--proxy", proxy] if proxy else []
 
     with tempfile.TemporaryDirectory() as d:
-        # Ask for multiple langs; yt-dlp will download whichever exists.
         cmd = [
             "yt-dlp",
             "--skip-download",
             "--no-warnings",
             "--write-subs",
             "--write-auto-subs",
-            "--sub-lang",
-            ",".join(langs),
-            "--sub-format",
-            "vtt",
-            "-o",
-            os.path.join(d, "%(id)s.%(ext)s"),
+            "--sub-lang", ",".join(langs),
+            "--sub-format", "vtt",
+            "-o", os.path.join(d, "%(id)s.%(ext)s"),
+            # --- NOVOS ARGUMENTOS PARA EVITAR BLOQUEIO ---
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "--no-check-certificates",
+            "--geo-bypass",
+            # --------------------------------------------
             *proxy_arg,
             url,
         ]
 
-        logger.info(f"yt-dlp subtitle attempt for {video_id} (proxy={'on' if proxy else 'off'})")
-        subprocess.check_call(cmd)
+        logger.info(f"yt-dlp attempt for {video_id}")
+        
+        # Usar Popen ou run para capturar erros detalhados sem quebrar o microserviço
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            logger.error(f"yt-dlp stderr: {result.stderr}")
+            raise RuntimeError(f"yt-dlp failed with exit code {result.returncode}")
 
-        # yt-dlp typically creates files like: <id>.<lang>.vtt or <id>.<lang>.auto.vtt
         vtt_files = sorted(glob.glob(os.path.join(d, "*.vtt")))
         if not vtt_files:
             raise RuntimeError("yt-dlp found no subtitle files (.vtt)")
@@ -130,7 +131,6 @@ def fetch_subs_with_ytdlp(video_id: str, langs: Tuple[str, ...]) -> Tuple[str, s
         chosen = vtt_files[0]
         base = os.path.basename(chosen)
 
-        # crude heuristics
         is_auto = ".auto." in base
         lang_guess = "en"
         m = re.search(r"\.(?P<lang>[a-zA-Z-]+)\.(?:auto\.)?vtt$", base)
@@ -139,8 +139,9 @@ def fetch_subs_with_ytdlp(video_id: str, langs: Tuple[str, ...]) -> Tuple[str, s
 
         vtt = Path(chosen).read_text(encoding="utf-8", errors="ignore")
         text = _clean_vtt_to_text(vtt)
+        
         if not text:
-            raise RuntimeError("yt-dlp subtitle file was empty after cleanup")
+            raise RuntimeError("yt-dlp subtitle file was empty")
 
         return text, lang_guess, is_auto
 
