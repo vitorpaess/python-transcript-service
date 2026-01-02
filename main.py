@@ -1,30 +1,14 @@
-"""
-YouTube Transcript Microservice (with yt-dlp fallback)
-Deploy this on Fly.io / Render / Railway / Cloud Run
+import os
+import re
+import logging
+import subprocess
+import tempfile
+from typing import Optional, List, Tuple
 
-Requirements (suggested):
-    fastapi
-    uvicorn
-    youtube-transcript-api
-    yt-dlp
-    pydantic
-
-Run locally:
-    uvicorn main:app --host 0.0.0.0 --port 8080
-"""
-
+import assemblyai as aai
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from pathlib import Path
-from typing import Optional, List, Tuple
-import re
-import logging
-import os
-import subprocess
-import tempfile
-import glob
-
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import (
     TranscriptsDisabled,
@@ -32,8 +16,12 @@ from youtube_transcript_api._errors import (
     VideoUnavailable,
 )
 
+# 1. Configurações Iniciais
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Substitua pela sua chave real ou configure no Render como ENV var
+aai.settings.api_key = os.getenv("ASSEMBLY_AI_KEY") or "SUA_CHAVE_AQUI"
 
 app = FastAPI(title="YouTube Transcript Service")
 
@@ -45,11 +33,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
+# 2. Modelos de Dados
 class TranscriptRequest(BaseModel):
     video_id: str
-    preferred_languages: Optional[List[str]] = ["en", "en-US", "en-GB"]
-
+    preferred_languages: Optional[List[str]] = ["pt", "en"]
 
 class TranscriptResponse(BaseModel):
     success: bool
@@ -58,9 +45,8 @@ class TranscriptResponse(BaseModel):
     is_auto_generated: bool = False
     error: Optional[str] = None
 
-
+# 3. Funções Auxiliares
 def extract_video_id(url_or_id: str) -> str:
-    """Extract video ID from YouTube URL or return as-is if already an ID."""
     patterns = [
         r"(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/)([^&\n?#]+)",
         r"^([a-zA-Z0-9_-]{11})$",
@@ -71,173 +57,89 @@ def extract_video_id(url_or_id: str) -> str:
             return match.group(1)
     return url_or_id
 
-
-def _clean_vtt_to_text(vtt: str) -> str:
-    """Very small WebVTT -> plain text cleanup."""
-    lines = []
-    for line in vtt.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("WEBVTT"):
-            continue
-        if "-->" in line:
-            continue
-        # remove common VTT tags
-        line = re.sub(r"<[^>]+>", "", line)
-        lines.append(line)
-    # collapse whitespace
-    return re.sub(r"\s+", " ", " ".join(lines)).strip()
-
-def fetch_subs_with_ytdlp(video_id: str, langs: Tuple[str, ...]) -> Tuple[str, str, bool]:
+def fetch_subs_with_ytdlp(video_id: str, langs: tuple) -> tuple:
+    """
+    FALLBACK: Baixa o áudio e transcreve via AssemblyAI.
+    Resolve o problema de bloqueio de legendas/cookies.
+    """
     url = f"https://www.youtube.com/watch?v={video_id}"
     proxy = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
     proxy_arg = ["--proxy", proxy] if proxy else []
-    
-    logger.info(f"Proxy detectada: {'Sim' if proxy else 'Não'}")
-    if proxy:
-        logger.info(f"URL da Proxy: {proxy[:15]}...")
 
     with tempfile.TemporaryDirectory() as d:
         cmd = [
             "yt-dlp",
-            "--skip-download",
-            "--no-warnings",
-            "--write-subs",
-            "--write-auto-subs",
-            "--sub-lang", ",".join(langs),
-            # MUDANÇA 1: Não pedimos formato. O yt-dlp baixa o que existir e converte.
-            "--convert-subs", "vtt",
-            "-o", os.path.join(d, "%(id)s.%(ext)s"),
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "-f", "ba/b",
+            "--extract-audio",
+            "--audio-format", "mp3",
+            "--audio-quality", "9",
+            "-o", os.path.join(d, f"{video_id}.%(ext)s"),
             "--no-check-certificates",
             "--geo-bypass",
-            "--referer", "https://www.google.com/",
-            # MUDANÇA 2: Forçamos o cliente WEB que o Big Think usa, mas mantemos os outros de reserva.
-            "--extractor-args", "youtube:player_client=web,web_embedded,tv,android;skip=web",
             *proxy_arg,
             url,
         ]
 
-        logger.info(f"yt-dlp attempt for {video_id}")
+        logger.info(f"Fallback yt-dlp: Extraindo áudio de {video_id}")
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
-            error_details = result.stderr.strip().split('\n')[-1] if result.stderr else "Unknown error"
-            logger.error(f"yt-dlp stderr full: {result.stderr}")
-            raise RuntimeError(f"yt-dlp failed: {error_details}")
+            logger.error(f"Erro yt-dlp: {result.stderr}")
+            raise RuntimeError("Falha ao baixar áudio do YouTube.")
 
-        vtt_files = sorted(glob.glob(os.path.join(d, "*.vtt")))
-        if not vtt_files:
-            raise RuntimeError("yt-dlp found no subtitle files (.vtt)")
-
-        chosen = vtt_files[0]
-        base = os.path.basename(chosen)
-        is_auto = ".auto." in base
-        lang_guess = "en"
-        m = re.search(r"\.(?P<lang>[a-zA-Z-]+)\.(?:auto\.)?vtt$", base)
-        if m:
-            lang_guess = m.group("lang")
-
-        vtt = Path(chosen).read_text(encoding="utf-8", errors="ignore")
-        text = _clean_vtt_to_text(vtt)
+        audio_path = os.path.join(d, f"{video_id}.mp3")
         
-        if not text:
-            raise RuntimeError("yt-dlp subtitle file was empty")
-        
-        return text, lang_guess, is_auto
+        logger.info("Enviando para AssemblyAI...")
+        transcriber = aai.Transcriber()
+        transcript = transcriber.transcribe(audio_path)
 
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}
+        if transcript.status == aai.TranscriptStatus.error:
+            raise RuntimeError(f"Erro AssemblyAI: {transcript.error}")
 
+        return transcript.text, "detected", True
 
+# 4. Endpoints
 @app.post("/transcript", response_model=TranscriptResponse)
 def fetch_transcript(request: TranscriptRequest):
     video_id = extract_video_id(request.video_id)
-    preferred_langs = tuple(request.preferred_languages or ["en"])
+    preferred_langs = tuple(request.preferred_languages or ["pt", "en"])
 
-    logger.info(f"Fetching transcript for video: {video_id}")
-
-    # 1) Try youtube-transcript-api first (fast, cheap)
+    # TENTA 1: Biblioteca oficial (rápida e grátis)
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-
-        transcript = None
-        is_auto = False
-        lang_used = None
-
-        # manual first
+        
+        # Tenta manual, depois gerada
         try:
-            transcript = transcript_list.find_manually_created_transcript(list(preferred_langs))
-            is_auto = False
-            lang_used = transcript.language_code
-            logger.info(f"Found manual transcript in {lang_used}")
+            t = transcript_list.find_manually_created_transcript(list(preferred_langs))
         except NoTranscriptFound:
-            pass
+            t = transcript_list.find_generated_transcript(list(preferred_langs))
+        
+        entries = t.fetch()
+        text = " ".join([e['text'] for e in entries]).strip()
+        
+        return TranscriptResponse(
+            success=True, 
+            text=text, 
+            language=t.language_code, 
+            is_auto_generated=t.is_generated
+        )
 
-        # auto-generated second
-        if transcript is None:
-            try:
-                transcript = transcript_list.find_generated_transcript(list(preferred_langs))
-                is_auto = True
-                lang_used = transcript.language_code
-                logger.info(f"Found auto-generated transcript in {lang_used}")
-            except NoTranscriptFound:
-                pass
-
-        # any transcript last
-        if transcript is None:
-            for t in transcript_list:
-                transcript = t
-                is_auto = getattr(t, "is_generated", False)
-                lang_used = getattr(t, "language_code", None)
-                logger.info(f"Using fallback transcript in {lang_used} (auto={is_auto})")
-                break
-
-        if transcript is not None:
-            entries = transcript.fetch()
-            text = " ".join(
-                entry.get("text", "").replace("\n", " ").strip()
-                for entry in entries
-                if entry.get("text")
-            ).strip()
-
-            if text:
-                return TranscriptResponse(
-                    success=True,
-                    text=text,
-                    language=lang_used,
-                    is_auto_generated=is_auto,
-                )
-
-        # If youtube-transcript-api found nothing usable, fall through to yt-dlp
-        logger.warning(f"youtube-transcript-api returned no usable transcript for {video_id}; trying yt-dlp fallback")
-
-    except (TranscriptsDisabled, VideoUnavailable, NoTranscriptFound) as e:
-        # These are often thrown even when captions exist but are blocked / served differently.
-        logger.warning(f"youtube-transcript-api failed for {video_id} ({type(e).__name__}); trying yt-dlp fallback")
     except Exception as e:
-        logger.warning(f"youtube-transcript-api unexpected failure for {video_id}: {e}; trying yt-dlp fallback")
+        logger.warning(f"youtube-transcript-api falhou para {video_id}. Indo para fallback de áudio.")
 
-    # 2) yt-dlp fallback (downsub-style)
+    # TENTA 2: Fallback de Áudio + IA (Onde a mágica acontece)
     try:
-        text, lang_used, is_auto = fetch_subs_with_ytdlp(video_id, preferred_langs)
+        text, lang, is_auto = fetch_subs_with_ytdlp(video_id, preferred_langs)
         return TranscriptResponse(
             success=True,
             text=text,
-            language=lang_used,
-            is_auto_generated=is_auto,
+            language=lang,
+            is_auto_generated=is_auto
         )
     except Exception as e:
-        logger.error(f"yt-dlp fallback failed for {video_id}: {e}")
-        return TranscriptResponse(
-            success=False,
-            error=f"Captions not accessible via youtube-transcript-api or yt-dlp. Details: {str(e)}",
-        )
-
+        logger.error(f"Fallback falhou: {str(e)}")
+        return TranscriptResponse(success=False, error=str(e))
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
-
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080
