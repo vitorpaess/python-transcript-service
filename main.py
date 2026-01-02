@@ -63,7 +63,8 @@ def fetch_subs_with_ytdlp(video_id: str, langs: tuple) -> tuple:
     with tempfile.TemporaryDirectory() as d:
         cmd = [
             "yt-dlp",
-            "--proxy", "",        # <--- ISSO AQUI: Força proxy vazia (conexão direta)
+            "--proxy", "",           # Força conexão direta
+            "--force-ipv4",          # Às vezes o IPv4 é mais estável no Render
             "-f", "ba/b",
             "--extract-audio",
             "--audio-format", "mp3",
@@ -73,7 +74,33 @@ def fetch_subs_with_ytdlp(video_id: str, langs: tuple) -> tuple:
             "--geo-bypass",
             url,
         ]
-        # ... resto do código igual
+
+        try:
+            logger.info(f"Fallback yt-dlp: Extraindo áudio de {video_id}")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120) # 2 min de limite
+            
+            if result.returncode != 0:
+                logger.error(f"Erro yt-dlp: {result.stderr}")
+                raise RuntimeError("YouTube bloqueou o download direto.")
+
+            audio_path = os.path.join(d, f"{video_id}.mp3")
+            
+            if not os.path.exists(audio_path):
+                raise RuntimeError("Arquivo de áudio não foi criado.")
+
+            logger.info("Enviando para AssemblyAI...")
+            transcriber = aai.Transcriber()
+            transcript = transcriber.transcribe(audio_path)
+
+            if transcript.status == aai.TranscriptStatus.error:
+                raise RuntimeError(f"Erro AssemblyAI: {transcript.error}")
+
+            return transcript.text, "detected", True
+
+        except Exception as e:
+            logger.error(f"Falha interna no fetch_subs: {str(e)}")
+            # IMPORTANTE: Retornar uma tupla vazia ou erro claro para evitar o "NoneType"
+            raise e
 
 # 4. Endpoints
 @app.post("/transcript", response_model=TranscriptResponse)
@@ -85,7 +112,6 @@ def fetch_transcript(request: TranscriptRequest):
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
         
-        # Tenta manual, depois gerada
         try:
             t = transcript_list.find_manually_created_transcript(list(preferred_langs))
         except NoTranscriptFound:
@@ -104,9 +130,13 @@ def fetch_transcript(request: TranscriptRequest):
     except Exception as e:
         logger.warning(f"youtube-transcript-api falhou para {video_id}. Indo para fallback de áudio.")
 
-    # TENTA 2: Fallback de Áudio + IA (Onde a mágica acontece)
+    # TENTA 2: Fallback de Áudio + IA (AssemblyAI)
     try:
-        text, lang, is_auto = fetch_subs_with_ytdlp(video_id, preferred_langs)
+        # Aqui é onde o erro de "unpack" acontecia se a função retornasse None
+        # Com o 'raise e' que colocamos na função acima, ele cai direto no except abaixo
+        result = fetch_subs_with_ytdlp(video_id, preferred_langs)
+        text, lang, is_auto = result
+        
         return TranscriptResponse(
             success=True,
             text=text,
@@ -115,10 +145,12 @@ def fetch_transcript(request: TranscriptRequest):
         )
     except Exception as e:
         logger.error(f"Fallback falhou: {str(e)}")
-        return TranscriptResponse(success=False, error=str(e))
+        return TranscriptResponse(
+            success=False, 
+            error=f"Erro ao processar áudio: {str(e)}"
+        )
 
 if __name__ == "__main__":
     import uvicorn
-    # Observe que fechamos o getenv e depois o int:
     port = int(os.getenv("PORT", 8080)) 
     uvicorn.run(app, host="0.0.0.0", port=port)
