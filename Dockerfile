@@ -1,24 +1,23 @@
-# 1. Usar a imagem 'bullseye' que é muito mais estável que a 'trixie' (que está dando erro)
-FROM python:3.10-bullseye
+# Usamos uma imagem que já contém Python e FFMPEG pré-instalados
+FROM mwader/static-ffmpeg:5.1.2 AS ffmpeg
+FROM python:3.10-slim
 
-# 2. Configurar para ignorar erros temporários de rede e instalar ffmpeg
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+# Copiamos o executável do ffmpeg da imagem anterior para esta
+COPY --from=ffmpeg /ffmpeg /usr/local/bin/
+COPY --from=ffmpeg /ffprobe /usr/local/bin/
 
-# 3. Diretório de trabalho
+# Definir diretório de trabalho
 WORKDIR /app
 
-# 4. Instalar dependências do Python
+# Instalar dependências do Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 5. Copiar o código
+# Copiar o restante do código
 COPY . .
 
-# 6. Porta padrão
+# Porta que o Render utiliza
 EXPOSE 8080
 
-# 7. Comando de inicialização
+# Comando para iniciar
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
