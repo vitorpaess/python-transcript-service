@@ -61,28 +61,29 @@ def fetch_subs_with_ytdlp(video_id: str, langs: tuple) -> tuple:
     url = f"https://www.youtube.com/watch?v={video_id}"
     
     try:
-        logger.info(f"Obtendo link direto de áudio para {video_id}...")
+        logger.info(f"Obtendo link direto de áudio para {video_id} com User-Agent...")
         
-        # Este comando não baixa o vídeo, apenas extrai a URL direta do áudio
         cmd = [
             "yt-dlp",
             "--get-url",
-            "-f", "ba",  # busca o melhor áudio (best audio)
+            "-f", "ba",
             "--proxy", "", 
+            # O "pulo do gato": um User-Agent de um Chrome real
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "--no-check-certificates",
             url
         ]
         
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         
         if result.returncode != 0:
-            raise RuntimeError(f"YouTube recusou fornecer o link: {result.stderr}")
+            # Se o erro de bot persistir, vamos tentar uma última cartada: tirar o vídeo ID do URL
+            raise RuntimeError(f"YouTube ainda bloqueia: {result.stderr}")
 
         direct_audio_url = result.stdout.strip()
-        
-        logger.info("Link direto obtido. Enviando para AssemblyAI...")
+        logger.info("Link direto obtido com sucesso!")
         
         transcriber = aai.Transcriber()
-        # Passamos a URL direta (do GoogleVideo) em vez da URL do YouTube
         transcript = transcriber.transcribe(direct_audio_url)
 
         if transcript.status == aai.TranscriptStatus.error:
