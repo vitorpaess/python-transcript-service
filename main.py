@@ -58,13 +58,12 @@ def extract_video_id(url_or_id: str) -> str:
     return url_or_id
 
 def fetch_subs_with_ytdlp(video_id: str, langs: tuple) -> tuple:
-    """
-    FALLBACK: Baixa o áudio e transcreve via AssemblyAI.
-    Resolve o problema de bloqueio de legendas/cookies.
-    """
     url = f"https://www.youtube.com/watch?v={video_id}"
-    proxy = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
-    proxy_arg = ["--proxy", proxy] if proxy else []
+    
+    # COMENTE OU REMOVA ESTAS LINHAS DE PROXY:
+    # proxy = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
+    # proxy_arg = ["--proxy", proxy] if proxy else []
+    proxy_arg = [] # Deixe vazio para testar sem proxy
 
     with tempfile.TemporaryDirectory() as d:
         cmd = [
@@ -76,9 +75,10 @@ def fetch_subs_with_ytdlp(video_id: str, langs: tuple) -> tuple:
             "-o", os.path.join(d, f"{video_id}.%(ext)s"),
             "--no-check-certificates",
             "--geo-bypass",
-            *proxy_arg,
+            # *proxy_arg,  # Remova o asterisco e a variável aqui
             url,
         ]
+        # ... resto do código igual
 
         logger.info(f"Fallback yt-dlp: Extraindo áudio de {video_id}")
         result = subprocess.run(cmd, capture_output=True, text=True)
