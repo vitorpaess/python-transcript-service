@@ -58,21 +58,34 @@ def extract_video_id(url_or_id: str) -> str:
     return url_or_id
 
 def fetch_subs_with_ytdlp(video_id: str, langs: tuple) -> tuple:
-    """
-    FALLBACK: Usa a própria AssemblyAI para buscar o áudio do YouTube.
-    Isso evita bloqueios de IP no seu servidor Render.
-    """
     url = f"https://www.youtube.com/watch?v={video_id}"
     
     try:
-        logger.info(f"Fallback: Solicitando que a AssemblyAI processe o vídeo {video_id}")
+        logger.info(f"Obtendo link direto de áudio para {video_id}...")
+        
+        # Este comando não baixa o vídeo, apenas extrai a URL direta do áudio
+        cmd = [
+            "yt-dlp",
+            "--get-url",
+            "-f", "ba",  # busca o melhor áudio (best audio)
+            "--proxy", "", 
+            url
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        
+        if result.returncode != 0:
+            raise RuntimeError(f"YouTube recusou fornecer o link: {result.stderr}")
+
+        direct_audio_url = result.stdout.strip()
+        
+        logger.info("Link direto obtido. Enviando para AssemblyAI...")
         
         transcriber = aai.Transcriber()
-        # Passamos a URL do YouTube diretamente para a AssemblyAI!
-        transcript = transcriber.transcribe(url)
+        # Passamos a URL direta (do GoogleVideo) em vez da URL do YouTube
+        transcript = transcriber.transcribe(direct_audio_url)
 
         if transcript.status == aai.TranscriptStatus.error:
-            # Se a AssemblyAI também for bloqueada, ela nos avisará aqui
             raise RuntimeError(f"Erro AssemblyAI: {transcript.error}")
 
         return transcript.text, "detected", True
