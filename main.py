@@ -106,15 +106,15 @@ def fetch_subs_with_ytdlp(video_id: str, langs: Tuple[str, ...]) -> Tuple[str, s
             "--write-subs",
             "--write-auto-subs",
             "--sub-lang", ",".join(langs),
-            # Mudança 1: 'best' aceita qualquer formato que o YouTube oferecer (srv, json, vtt)
-            "--sub-format", "best", 
+            # MUDANÇA 1: Não pedimos formato. O yt-dlp baixa o que existir e converte.
+            "--convert-subs", "vtt",
             "-o", os.path.join(d, "%(id)s.%(ext)s"),
             "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "--no-check-certificates",
             "--geo-bypass",
             "--referer", "https://www.google.com/",
-            # Mudança 2: Invertemos a ordem. Web Embedded primeiro, TV como backup.
-            "--extractor-args", "youtube:player_client=web_embedded,tv,android;skip=web",
+            # MUDANÇA 2: Forçamos o cliente WEB que o Big Think usa, mas mantemos os outros de reserva.
+            "--extractor-args", "youtube:player_client=web,web_embedded,tv,android;skip=web",
             *proxy_arg,
             url,
         ]
