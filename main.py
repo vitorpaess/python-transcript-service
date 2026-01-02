@@ -63,8 +63,10 @@ def fetch_subs_with_ytdlp(video_id: str, langs: tuple) -> tuple:
     with tempfile.TemporaryDirectory() as d:
         cmd = [
             "yt-dlp",
-            "--proxy", "",           # Força conexão direta
-            "--force-ipv4",          # Às vezes o IPv4 é mais estável no Render
+            "--proxy", "",
+            "--force-ipv4",
+            "--impersonate", "chrome",  # Finge ser um navegador Chrome real
+            "--js-runtime", "deno",      # Usa o Deno que instalamos no Docker
             "-f", "ba/b",
             "--extract-audio",
             "--audio-format", "mp3",
