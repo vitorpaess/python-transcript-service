@@ -106,14 +106,14 @@ def fetch_subs_with_ytdlp(video_id: str, langs: Tuple[str, ...]) -> Tuple[str, s
             "--write-subs",
             "--write-auto-subs",
             "--sub-lang", ",".join(langs),
-            # MUDANÇA 1: Aceitar QUALQUER formato de legenda existente
+            # Mudança 1: 'best' aceita qualquer formato que o YouTube oferecer (srv, json, vtt)
             "--sub-format", "best", 
             "-o", os.path.join(d, "%(id)s.%(ext)s"),
             "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "--no-check-certificates",
             "--geo-bypass",
             "--referer", "https://www.google.com/",
-            # MUDANÇA 2: Priorizar Web Embedded para garantir que pegue legendas de Shorts
+            # Mudança 2: Invertemos a ordem. Web Embedded primeiro, TV como backup.
             "--extractor-args", "youtube:player_client=web_embedded,tv,android;skip=web",
             *proxy_arg,
             url,
