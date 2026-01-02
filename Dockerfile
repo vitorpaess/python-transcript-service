@@ -1,8 +1,10 @@
 FROM python:3.10-slim
 
+# Instala apenas o necessário para rede
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Instalar dependências apenas do Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
