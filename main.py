@@ -111,7 +111,7 @@ def fetch_subs_with_ytdlp(video_id: str, langs: Tuple[str, ...]) -> Tuple[str, s
             "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
             "--no-check-certificates",
             "--geo-bypass",
-            "--extractor-args", "youtube:player_client=android;skip=web",
+            "--extractor-args", "youtube:web_embedded=android;skip=web",
             *proxy_arg,
             url,
         ]
@@ -141,7 +141,7 @@ def fetch_subs_with_ytdlp(video_id: str, langs: Tuple[str, ...]) -> Tuple[str, s
         
         if not text:
             raise RuntimeError("yt-dlp subtitle file was empty")
-
+        
         return text, lang_guess, is_auto
 
 @app.get("/health")
