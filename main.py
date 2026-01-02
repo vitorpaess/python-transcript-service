@@ -108,10 +108,11 @@ def fetch_subs_with_ytdlp(video_id: str, langs: Tuple[str, ...]) -> Tuple[str, s
             "--sub-lang", ",".join(langs),
             "--sub-format", "vtt",
             "-o", os.path.join(d, "%(id)s.%(ext)s"),
-            "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "--no-check-certificates",
             "--geo-bypass",
-            "--extractor-args", "youtube:web_embedded=android;skip=web",
+            "--referer", "https://www.google.com/",
+            "--extractor-args", "youtube:player_client=tv;skip=web",
             *proxy_arg,
             url,
         ]
