@@ -58,14 +58,14 @@ def extract_video_id(url_or_id: str) -> str:
     return url_or_id
 
 def fetch_subs_with_ytdlp(video_id: str, langs: tuple) -> tuple:
+    """
+    FALLBACK: Baixa o áudio e transcreve via AssemblyAI.
+    Removida a proxy que estava causando erro 402.
+    """
     url = f"https://www.youtube.com/watch?v={video_id}"
     
-    # COMENTE OU REMOVA ESTAS LINHAS DE PROXY:
-    # proxy = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
-    # proxy_arg = ["--proxy", proxy] if proxy else []
-    proxy_arg = [] # Deixe vazio para testar sem proxy
-
     with tempfile.TemporaryDirectory() as d:
+        # Comando sem os argumentos de --proxy
         cmd = [
             "yt-dlp",
             "-f", "ba/b",
@@ -75,17 +75,15 @@ def fetch_subs_with_ytdlp(video_id: str, langs: tuple) -> tuple:
             "-o", os.path.join(d, f"{video_id}.%(ext)s"),
             "--no-check-certificates",
             "--geo-bypass",
-            # *proxy_arg,  # Remova o asterisco e a variável aqui
             url,
         ]
-        # ... resto do código igual
 
-        logger.info(f"Fallback yt-dlp: Extraindo áudio de {video_id}")
+        logger.info(f"Fallback yt-dlp: Extraindo áudio de {video_id} (Sem Proxy)")
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
             logger.error(f"Erro yt-dlp: {result.stderr}")
-            raise RuntimeError("Falha ao baixar áudio do YouTube.")
+            raise RuntimeError("Falha ao baixar áudio do YouTube (IP possivelmente bloqueado).")
 
         audio_path = os.path.join(d, f"{video_id}.mp3")
         
