@@ -69,6 +69,7 @@ def extract_video_id(url_or_id: str) -> str:
             return match.group(1)
     return url_or_id
 
+
 def fetch_subs_with_ytdlp(video_id: str) -> Tuple[str, str, bool]:
     if not ENABLE_YTDLP:
         raise RuntimeError("Fallback por áudio desabilitado")
@@ -76,6 +77,22 @@ def fetch_subs_with_ytdlp(video_id: str) -> Tuple[str, str, bool]:
     if running_on_render():
         raise RuntimeError("Fallback por áudio desabilitado neste ambiente")
 
+    # -----------------------------------------------------
+    # DEBUG: confirmar se yt-dlp existe
+    # -----------------------------------------------------
+    which_result = subprocess.run(
+        ["which", "yt-dlp"],
+        capture_output=True,
+        text=True,
+    )
+
+    logger.info(f"[debug] yt-dlp path: {which_result.stdout.strip() or '<not found>'}")
+    if which_result.returncode != 0:
+        raise RuntimeError("yt-dlp não está instalado ou não está no PATH")
+
+    # -----------------------------------------------------
+    # yt-dlp execution
+    # -----------------------------------------------------
     url = f"https://www.youtube.com/watch?v={video_id}"
     proxy_url = os.getenv("HTTPS_PROXY")
 
@@ -102,18 +119,25 @@ def fetch_subs_with_ytdlp(video_id: str) -> Tuple[str, str, bool]:
     )
 
     if result.returncode != 0:
-        stderr = (result.stderr or "").lower()
+        logger.error("[yt-dlp] FAILED")
+        logger.error(f"[yt-dlp] cmd: {' '.join(cmd)}")
+        logger.error(f"[yt-dlp] stdout: {result.stdout or '<empty>'}")
+        logger.error(f"[yt-dlp] stderr: {result.stderr or '<empty>'}")
 
-        if "sign in to confirm" in stderr or "bot" in stderr:
+        stderr_lower = (result.stderr or "").lower()
+        if "sign in to confirm" in stderr_lower or "bot" in stderr_lower:
             raise RuntimeError("YouTube bloqueou o acesso (bot detection)")
 
-        raise RuntimeError(f"yt-dlp erro: {result.stderr.strip()}")
+        raise RuntimeError(f"yt-dlp exit status {result.returncode}")
 
     direct_audio_url = result.stdout.strip()
 
     if not direct_audio_url.startswith("http"):
         raise RuntimeError("URL de áudio inválida retornada pelo yt-dlp")
 
+    # -----------------------------------------------------
+    # AssemblyAI
+    # -----------------------------------------------------
     logger.info("[AssemblyAI] Enviando URL para transcrição")
 
     transcriber = aai.Transcriber()
@@ -182,4 +206,5 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
