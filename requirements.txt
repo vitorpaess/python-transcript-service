@@ -3,3 +3,4 @@ uvicorn[standard]==0.27.0
 youtube-transcript-api==0.6.2
 pydantic==2.5.3
 pytubefix==6.15.2
+yt-dlp
