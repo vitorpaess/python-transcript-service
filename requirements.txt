@@ -1,4 +1,5 @@
-fastapi
-uvicorn
-youtube-transcript-api==0.6.1
-pytubefix
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+youtube-transcript-api==0.6.2
+pydantic==2.5.3
+pytubefix==6.15.2
