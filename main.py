@@ -1,210 +1,88 @@
-import os
-import re
 import logging
-import subprocess
-from typing import Optional, List, Tuple
-
-import assemblyai as aai
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import (
+from fastapi import FastAPI, HTTPException, Query
+from youtube_transcript_api import (
+    YouTubeTranscriptApi,
     TranscriptsDisabled,
     NoTranscriptFound,
     VideoUnavailable,
 )
 
-# =========================================================
-# 1. Configurações Iniciais
-# =========================================================
-
-logging.basicConfig(level=logging.INFO)
+# -------------------------
+# Logging
+# -------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:%(name)s:%(message)s",
+)
 logger = logging.getLogger("youtube-transcript-service")
 
-aai.settings.api_key = os.getenv("ASSEMBLY_AI_KEY", "")
-
-ENABLE_YTDLP = os.getenv("ENABLE_YTDLP", "true").lower() == "true"
-
-def running_on_render() -> bool:
-    return os.getenv("RENDER") is not None
-
-app = FastAPI(title="YouTube Transcript Service")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+# -------------------------
+# App
+# -------------------------
+app = FastAPI(
+    title="YouTube Transcript Service",
+    version="1.0.0",
 )
 
-# =========================================================
-# 2. Modelos
-# =========================================================
+# -------------------------
+# Health check
+# -------------------------
+@app.get("/")
+def health():
+    return {"status": "ok"}
 
-class TranscriptRequest(BaseModel):
-    video_id: str
-    preferred_languages: Optional[List[str]] = ["pt", "en"]
+# -------------------------
+# Transcript endpoint
+# -------------------------
+@app.get("/transcript")
+def get_transcript(
+    video_id: str = Query(..., description="YouTube video ID"),
+    lang: str = Query("en", description="Preferred language"),
+):
+    logger.info(f"Request transcript video_id={video_id} lang={lang}")
 
-class TranscriptResponse(BaseModel):
-    success: bool
-    text: Optional[str] = None
-    language: Optional[str] = None
-    is_auto_generated: bool = False
-    error: Optional[str] = None
-
-# =========================================================
-# 3. Helpers
-# =========================================================
-
-def extract_video_id(url_or_id: str) -> str:
-    patterns = [
-        r"(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/)([^&\n?#]+)",
-        r"^([a-zA-Z0-9_-]{11})$",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, url_or_id)
-        if match:
-            return match.group(1)
-    return url_or_id
-
-
-def fetch_subs_with_ytdlp(video_id: str) -> Tuple[str, str, bool]:
-    if not ENABLE_YTDLP:
-        raise RuntimeError("Fallback por áudio desabilitado")
-
-    if running_on_render():
-        raise RuntimeError("Fallback por áudio desabilitado neste ambiente")
-
-    # -----------------------------------------------------
-    # DEBUG: confirmar se yt-dlp existe
-    # -----------------------------------------------------
-    which_result = subprocess.run(
-        ["which", "yt-dlp"],
-        capture_output=True,
-        text=True,
-    )
-
-    logger.info(f"[debug] yt-dlp path: {which_result.stdout.strip() or '<not found>'}")
-    if which_result.returncode != 0:
-        raise RuntimeError("yt-dlp não está instalado ou não está no PATH")
-
-    # -----------------------------------------------------
-    # yt-dlp execution
-    # -----------------------------------------------------
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    proxy_url = os.getenv("HTTPS_PROXY")
-
-    logger.info(f"[yt-dlp] Tentando extrair áudio de {video_id}")
-
-    cmd = [
-        "yt-dlp",
-        "--js-runtimes", "node",
-        "--get-url",
-        "-f", "bestaudio/best",
-        "--no-check-certificates",
-        url,
-    ]
-
-    if proxy_url:
-        logger.info("[yt-dlp] Usando proxy")
-        cmd = ["yt-dlp", "--proxy", proxy_url] + cmd[1:]
-
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=25,
-    )
-
-    if result.returncode != 0:
-        logger.error("[yt-dlp] FAILED")
-        logger.error(f"[yt-dlp] cmd: {' '.join(cmd)}")
-        logger.error(f"[yt-dlp] stdout: {result.stdout or '<empty>'}")
-        logger.error(f"[yt-dlp] stderr: {result.stderr or '<empty>'}")
-
-        stderr_lower = (result.stderr or "").lower()
-        if "sign in to confirm" in stderr_lower or "bot" in stderr_lower:
-            raise RuntimeError("YouTube bloqueou o acesso (bot detection)")
-
-        raise RuntimeError(f"yt-dlp exit status {result.returncode}")
-
-    direct_audio_url = result.stdout.strip()
-
-    if not direct_audio_url.startswith("http"):
-        raise RuntimeError("URL de áudio inválida retornada pelo yt-dlp")
-
-    # -----------------------------------------------------
-    # AssemblyAI
-    # -----------------------------------------------------
-    logger.info("[AssemblyAI] Enviando URL para transcrição")
-
-    transcriber = aai.Transcriber()
-    transcript = transcriber.transcribe(direct_audio_url)
-
-    if transcript.status == aai.TranscriptStatus.error:
-        raise RuntimeError(f"AssemblyAI erro: {transcript.error}")
-
-    return transcript.text, "detected", True
-
-# =========================================================
-# 4. Endpoint
-# =========================================================
-
-@app.post("/transcript", response_model=TranscriptResponse)
-def fetch_transcript(request: TranscriptRequest):
-    video_id = extract_video_id(request.video_id)
-    preferred_langs = request.preferred_languages or ["pt", "en"]
-
-    # Tentativa 1 — transcript oficial
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-
-        try:
-            t = transcript_list.find_manually_created_transcript(preferred_langs)
-        except NoTranscriptFound:
-            t = transcript_list.find_generated_transcript(preferred_langs)
-
-        entries = t.fetch()
-        text = " ".join(e["text"] for e in entries).strip()
-
-        return TranscriptResponse(
-            success=True,
-            text=text,
-            language=t.language_code,
-            is_auto_generated=t.is_generated,
+        # Tenta pegar transcript direto
+        transcript = YouTubeTranscriptApi.get_transcript(
+            video_id,
+            languages=[lang],
         )
 
-    except Exception:
-        logger.warning(f"[transcript-api] Falhou para {video_id}")
+        text = " ".join(item["text"] for item in transcript)
 
-    # Tentativa 2 — fallback por áudio
-    try:
-        text, lang, is_auto = fetch_subs_with_ytdlp(video_id)
+        return {
+            "video_id": video_id,
+            "language": lang,
+            "transcript": text,
+        }
 
-        return TranscriptResponse(
-            success=True,
-            text=text,
-            language=lang,
-            is_auto_generated=is_auto,
+    except TranscriptsDisabled:
+        logger.warning(f"[transcript-api] Transcripts disabled for {video_id}")
+        raise HTTPException(
+            status_code=404,
+            detail="Transcripts are disabled for this video",
+        )
+
+    except NoTranscriptFound:
+        logger.warning(f"[transcript-api] No transcript found for {video_id}")
+        raise HTTPException(
+            status_code=404,
+            detail="No transcript found for this video",
+        )
+
+    except VideoUnavailable:
+        logger.warning(f"[transcript-api] Video unavailable {video_id}")
+        raise HTTPException(
+            status_code=404,
+            detail="Video unavailable",
         )
 
     except Exception as e:
-        logger.error(f"[fallback] Falhou: {str(e)}")
-
-        return TranscriptResponse(
-            success=False,
-            error=str(e),
+        logger.error(f"[transcript-api] Unexpected error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal error while fetching transcript",
         )
 
-# =========================================================
-# 5. Local run
-# =========================================================
-
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.getenv("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=port)
 
 
