@@ -1,7 +1,7 @@
 import logging
-from typing import List
+from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Query
 from pydantic import BaseModel
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import (
@@ -24,7 +24,7 @@ logger = logging.getLogger("youtube-transcript-service")
 # =========================================================
 app = FastAPI(
     title="YouTube Transcript Service",
-    version="1.0.0",
+    version="1.1.0",
 )
 
 # =========================================================
@@ -33,6 +33,14 @@ app = FastAPI(
 class TranscriptRequest(BaseModel):
     video_id: str
     lang: str = "en"
+
+class TranscriptResponse(BaseModel):
+    success: bool
+    video_id: str
+    transcript: Optional[str] = None
+    language: Optional[str] = None
+    is_auto_generated: Optional[bool] = None
+    error: Optional[str] = None
 
 # =========================================================
 # Health check
@@ -44,7 +52,7 @@ def health():
 # =========================================================
 # Core logic
 # =========================================================
-def fetch_transcript(video_id: str, lang: str):
+def fetch_transcript(video_id: str, lang: str) -> TranscriptResponse:
     logger.info(f"Request transcript video_id={video_id} lang={lang}")
 
     try:
@@ -58,56 +66,57 @@ def fetch_transcript(video_id: str, lang: str):
             try:
                 transcript = transcript_list.find_generated_transcript([lang])
             except NoTranscriptFound:
-                # 3️⃣ fallback: primeiro transcript disponível
+                # 3️⃣ fallback: primeiro idioma disponível
                 available_langs: List[str] = [
                     t.language_code for t in transcript_list
                 ]
 
                 if not available_langs:
-                    raise NoTranscriptFound(video_id)
+                    return TranscriptResponse(
+                        success=False,
+                        video_id=video_id,
+                        error="No transcripts available for this video",
+                    )
 
                 transcript = transcript_list.find_transcript(available_langs)
 
         entries = transcript.fetch()
         text = " ".join(item["text"] for item in entries).strip()
 
-        return {
-            "success": True,
-            "video_id": video_id,
-            "language": transcript.language_code,
-            "is_auto_generated": transcript.is_generated,
-            "transcript": text,
-        }
-
-    except TranscriptsDisabled:
-        raise HTTPException(
-            status_code=404,
-            detail="Transcripts are disabled for this video",
+        return TranscriptResponse(
+            success=True,
+            video_id=video_id,
+            transcript=text,
+            language=transcript.language_code,
+            is_auto_generated=transcript.is_generated,
         )
 
-    except NoTranscriptFound:
-        raise HTTPException(
-            status_code=404,
-            detail="No transcript found for this video",
+    except TranscriptsDisabled:
+        return TranscriptResponse(
+            success=False,
+            video_id=video_id,
+            error="Transcripts are disabled for this video",
         )
 
     except VideoUnavailable:
-        raise HTTPException(
-            status_code=404,
-            detail="Video unavailable",
+        return TranscriptResponse(
+            success=False,
+            video_id=video_id,
+            error="Video unavailable",
         )
 
     except Exception:
         logger.exception("Unexpected error while fetching transcript")
-        raise HTTPException(
-            status_code=500,
-            detail="Internal error while fetching transcript",
+        return TranscriptResponse(
+            success=False,
+            video_id=video_id,
+            error="Internal error while fetching transcript",
         )
 
 # =========================================================
 # GET /transcript
 # =========================================================
-@app.get("/transcript")
+@app.get("/transcript", response_model=TranscriptResponse)
 def get_transcript(
     video_id: str = Query(..., description="YouTube video ID"),
     lang: str = Query("en", description="Preferred language"),
@@ -117,9 +126,10 @@ def get_transcript(
 # =========================================================
 # POST /transcript
 # =========================================================
-@app.post("/transcript")
+@app.post("/transcript", response_model=TranscriptResponse)
 def post_transcript(payload: TranscriptRequest):
     return fetch_transcript(payload.video_id, payload.lang)
+
 
 
 
