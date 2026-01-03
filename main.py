@@ -40,7 +40,7 @@ def health():
     return {"status": "ok"}
 
 # -------------------------
-# Core logic (version-safe)
+# Core logic
 # -------------------------
 def fetch_transcript(video_id: str, lang: str):
     logger.info(f"Request transcript video_id={video_id} lang={lang}")
@@ -64,47 +64,33 @@ def fetch_transcript(video_id: str, lang: str):
         }
 
     except TranscriptsDisabled:
-        logger.warning(f"[transcript-api] Transcripts disabled for {video_id}")
-        raise HTTPException(
-            status_code=404,
-            detail="Transcripts are disabled for this video",
-        )
+        raise HTTPException(404, "Transcripts are disabled for this video")
 
     except NoTranscriptFound:
-        logger.warning(f"[transcript-api] No transcript found for {video_id}")
-        raise HTTPException(
-            status_code=404,
-            detail="No transcript found for this video",
-        )
+        raise HTTPException(404, "No transcript found for this video")
 
     except VideoUnavailable:
-        logger.warning(f"[transcript-api] Video unavailable {video_id}")
-        raise HTTPException(
-            status_code=404,
-            detail="Video unavailable",
-        )
+        raise HTTPException(404, "Video unavailable")
 
     except Exception as e:
-        logger.error(f"[transcript-api] Unexpected error: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Internal error while fetching transcript",
-        )
+        logger.exception("Unexpected error")
+        raise HTTPException(500, "Internal error while fetching transcript")
 
 # -------------------------
-# GET /transcript
+# GET
 # -------------------------
 @app.get("/transcript")
 def get_transcript(
-    video_id: str = Query(..., description="YouTube video ID"),
-    lang: str = Query("en", description="Preferred language"),
+    video_id: str = Query(...),
+    lang: str = Query("en"),
 ):
     return fetch_transcript(video_id, lang)
 
 # -------------------------
-# POST /transcript
+# POST
 # -------------------------
 @app.post("/transcript")
 def post_transcript(payload: TranscriptRequest):
     return fetch_transcript(payload.video_id, payload.lang)
+
 
