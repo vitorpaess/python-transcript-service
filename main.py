@@ -1,5 +1,6 @@
 import logging
 from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel
 from youtube_transcript_api import (
     YouTubeTranscriptApi,
     TranscriptsDisabled,
@@ -25,6 +26,13 @@ app = FastAPI(
 )
 
 # -------------------------
+# Models (for POST)
+# -------------------------
+class TranscriptRequest(BaseModel):
+    video_id: str
+    lang: str = "en"
+
+# -------------------------
 # Health check
 # -------------------------
 @app.get("/")
@@ -32,17 +40,12 @@ def health():
     return {"status": "ok"}
 
 # -------------------------
-# Transcript endpoint
+# Shared logic
 # -------------------------
-@app.get("/transcript")
-def get_transcript(
-    video_id: str = Query(..., description="YouTube video ID"),
-    lang: str = Query("en", description="Preferred language"),
-):
+def fetch_transcript(video_id: str, lang: str):
     logger.info(f"Request transcript video_id={video_id} lang={lang}")
 
     try:
-        # Tenta pegar transcript direto
         transcript = YouTubeTranscriptApi.get_transcript(
             video_id,
             languages=[lang],
@@ -84,5 +87,19 @@ def get_transcript(
             detail="Internal error while fetching transcript",
         )
 
+# -------------------------
+# GET /transcript
+# -------------------------
+@app.get("/transcript")
+def get_transcript(
+    video_id: str = Query(..., description="YouTube video ID"),
+    lang: str = Query("en", description="Preferred language"),
+):
+    return fetch_transcript(video_id, lang)
 
-
+# -------------------------
+# POST /transcript
+# -------------------------
+@app.post("/transcript")
+def post_transcript(payload: TranscriptRequest):
+    return fetch_transcript(payload.video_id, payload.lang)
