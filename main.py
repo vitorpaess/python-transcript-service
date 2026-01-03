@@ -1,8 +1,8 @@
 import logging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
-from youtube_transcript_api import (
-    YouTubeTranscriptApi,
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import (
     TranscriptsDisabled,
     NoTranscriptFound,
     VideoUnavailable,
@@ -26,7 +26,7 @@ app = FastAPI(
 )
 
 # -------------------------
-# Models (for POST)
+# Models
 # -------------------------
 class TranscriptRequest(BaseModel):
     video_id: str
@@ -40,22 +40,26 @@ def health():
     return {"status": "ok"}
 
 # -------------------------
-# Shared logic
+# Core logic (version-safe)
 # -------------------------
 def fetch_transcript(video_id: str, lang: str):
     logger.info(f"Request transcript video_id={video_id} lang={lang}")
 
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(
-            video_id,
-            languages=[lang],
-        )
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
 
-        text = " ".join(item["text"] for item in transcript)
+        try:
+            transcript = transcript_list.find_manually_created_transcript([lang])
+        except NoTranscriptFound:
+            transcript = transcript_list.find_generated_transcript([lang])
+
+        entries = transcript.fetch()
+        text = " ".join(item["text"] for item in entries).strip()
 
         return {
             "video_id": video_id,
-            "language": lang,
+            "language": transcript.language_code,
+            "is_auto_generated": transcript.is_generated,
             "transcript": text,
         }
 
@@ -103,3 +107,4 @@ def get_transcript(
 @app.post("/transcript")
 def post_transcript(payload: TranscriptRequest):
     return fetch_transcript(payload.video_id, payload.lang)
+
