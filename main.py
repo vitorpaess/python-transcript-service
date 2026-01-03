@@ -1,125 +1,150 @@
-from fastapi import FastAPI, HTTPException
+import logging
+from fastapi import FastAPI
 from pydantic import BaseModel
+from typing import Optional
+
 from youtube_transcript_api import (
     YouTubeTranscriptApi,
     TranscriptsDisabled,
     NoTranscriptFound,
+    VideoUnavailable,
 )
-from youtube_transcript_api.formatters import TextFormatter
-from pytubefix import YouTube
-import logging
 
-logging.basicConfig(level=logging.INFO)
+# -------------------------
+# Optional pytubefix import
+# -------------------------
+try:
+    from pytubefix import YouTube
+    PYTUBEFIX_AVAILABLE = True
+except ImportError:
+    PYTUBEFIX_AVAILABLE = False
+
+# -------------------------
+# Logging
+# -------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:%(name)s:%(message)s",
+)
 logger = logging.getLogger("youtube-transcript-service")
 
-app = FastAPI()
+# -------------------------
+# App
+# -------------------------
+app = FastAPI(
+    title="YouTube Transcript Service",
+    version="1.1.0",
+)
 
-
+# -------------------------
+# Models
+# -------------------------
 class TranscriptRequest(BaseModel):
     video_id: str
-    lang: str = "en"
+    lang: Optional[str] = "en"
 
-
-class TranscriptResponse(BaseModel):
-    text: str | None
-    language: str | None
-    is_auto_generated: bool
-    error: str | None
-    source: str | None
-
-
+# -------------------------
+# Health check
+# -------------------------
 @app.get("/")
 def health():
     return {"status": "ok"}
 
-
-@app.post("/transcript", response_model=TranscriptResponse)
-def get_transcript(req: TranscriptRequest):
-    video_id = req.video_id
-    lang = req.lang
-
+# -------------------------
+# Core logic
+# -------------------------
+def fetch_transcript(video_id: str, lang: str):
     logger.info(f"Request transcript video_id={video_id} lang={lang}")
 
-    # -------------------------------
-    # 1. Try youtube-transcript-api
-    # -------------------------------
+    # 1️⃣ Try youtube-transcript-api
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        transcript = YouTubeTranscriptApi.get_transcript(
+            video_id,
+            languages=[lang],
+        )
 
-        transcript = None
-        is_auto_generated = False
+        text = " ".join(item["text"] for item in transcript)
 
-        if transcript_list.find_manually_created_transcript([lang]):
-            transcript = transcript_list.find_manually_created_transcript([lang])
-            is_auto_generated = False
-        elif transcript_list.find_generated_transcript([lang]):
-            transcript = transcript_list.find_generated_transcript([lang])
-            is_auto_generated = True
+        logger.info("[transcript-api] Success")
 
-        if transcript:
-            formatter = TextFormatter()
-            text = formatter.format_transcript(transcript.fetch())
-
-            return TranscriptResponse(
-                text=text,
-                language=transcript.language_code,
-                is_auto_generated=is_auto_generated,
-                error=None,
-                source="youtube-transcript-api",
-            )
+        return {
+            "success": True,
+            "text": text,
+            "language": lang,
+            "source": "youtube-transcript-api",
+            "is_auto_generated": False,
+        }
 
     except TranscriptsDisabled:
-        logger.info("Transcripts are disabled for this video")
-        return TranscriptResponse(
-            text=None,
-            language=None,
-            is_auto_generated=False,
-            error="Transcripts are disabled for this video",
-            source="youtube-transcript-api",
-        )
+        logger.warning("[transcript-api] Transcripts disabled")
 
     except NoTranscriptFound:
-        logger.info("No transcript found via youtube-transcript-api")
+        logger.warning("[transcript-api] No transcript found")
+
+    except VideoUnavailable:
+        logger.warning("[transcript-api] Video unavailable")
 
     except Exception as e:
-        logger.exception("youtube-transcript-api failed")
+        logger.error(f"[transcript-api] Unexpected error: {e}")
 
-    # -------------------------------
-    # 2. Fallback: pytubefix captions
-    # -------------------------------
-    try:
-        yt = YouTube(f"https://www.youtube.com/watch?v={video_id}")
+    # 2️⃣ Fallback: pytubefix (if available)
+    if PYTUBEFIX_AVAILABLE:
+        try:
+            logger.info("[fallback] Trying pytubefix")
 
-        captions = yt.captions.get_by_language_code(lang)
+            yt = YouTube(f"https://www.youtube.com/watch?v={video_id}")
 
-        if captions:
-            logger.info("pytubefix captions found")
+            captions = yt.captions
+            if not captions:
+                raise Exception("No captions available")
 
-            text = captions.generate_srt_captions()
-            return TranscriptResponse(
-                text=text,
-                language=lang,
-                is_auto_generated=True,
-                error=None,
-                source="pytubefix",
+            caption = (
+                captions.get_by_language_code(lang)
+                or captions.get_by_language_code("en")
+                or list(captions.values())[0]
             )
 
-        logger.info("No captions available via pytubefix")
+            text = caption.generate_srt_captions()
+            text = " ".join(
+                line for line in text.splitlines() if "-->" not in line and not line.isdigit()
+            )
 
-        return TranscriptResponse(
-            text=None,
-            language=None,
-            is_auto_generated=False,
-            error="No transcript available for this video",
-            source="pytubefix",
-        )
+            logger.info("[fallback] pytubefix success")
 
-    except Exception as e:
-        logger.exception("pytubefix failed")
-        raise HTTPException(
-            status_code=500,
-            detail="Internal transcript service error",
-        )
+            return {
+                "success": True,
+                "text": text,
+                "language": caption.code,
+                "source": "pytubefix",
+                "is_auto_generated": True,
+            }
+
+        except Exception as e:
+            logger.warning(f"[fallback] Failed: {e}")
+
+    else:
+        logger.warning("[fallback] pytubefix not available")
+
+    # 3️⃣ Final failure (IMPORTANT: still return 200)
+    return {
+        "success": False,
+        "error": "Transcripts are disabled for this video",
+    }
+
+# -------------------------
+# GET /transcript
+# -------------------------
+@app.get("/transcript")
+def get_transcript(video_id: str, lang: str = "en"):
+    return fetch_transcript(video_id, lang)
+
+# -------------------------
+# POST /transcript
+# -------------------------
+@app.post("/transcript")
+def post_transcript(payload: TranscriptRequest):
+    return fetch_transcript(payload.video_id, payload.lang or "en")
+
 
 
 
